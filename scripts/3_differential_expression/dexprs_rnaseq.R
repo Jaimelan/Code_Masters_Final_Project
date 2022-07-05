@@ -8,7 +8,6 @@
 ##
 ## Author: Jaime Llera
 ##
-## Date Created: 05-04-2022
 ##
 ## Email: jlleraoy@gmail.com
 ##
