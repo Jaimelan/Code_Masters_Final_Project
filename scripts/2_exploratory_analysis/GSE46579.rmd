@@ -13,8 +13,6 @@ output:
 
 # GSE46579 RNA SEQ
 
-Anotación mirbase y un identificador "brain" que no sé a qué corresponde.
-Filtrar los genes repetidos es prioritario, pues encontramos repeticiones. Crear una columna sobre la cuál eliminar los duplciados conservando el mayor.
 
 ## Descarga de datos
 
