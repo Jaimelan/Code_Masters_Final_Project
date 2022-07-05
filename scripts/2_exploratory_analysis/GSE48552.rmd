@@ -13,7 +13,6 @@ output:
 
 # GSE48552
 
-ANOTADO CON mirbase
 
 ## Descarga de datos
 
