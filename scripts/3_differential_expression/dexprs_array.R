@@ -1,4 +1,20 @@
+#!/usr/bin/env Rscript
 
+## ---------------------------
+##
+## Script name: Differential expression analysis for microarrays
+##
+## Author: Jaime Llera
+##
+## Date Created: 05-04-2022
+##
+## Email: jlleraoy@gmail.com
+##
+## ---------------------------
+##
+##   
+##
+## ---------------------------
 # Analisis de expresion diferencial en microarrays
 
 library(limma)
