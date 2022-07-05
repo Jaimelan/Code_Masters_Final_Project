@@ -1,3 +1,17 @@
+#!/usr/bin/env Rscript
+
+## ---------------------------
+##
+## Script name: Volcano plots for DE results
+##
+## Purpose of script: Makes volcanoplots of MArrayLM DE objects
+##
+## Author: Jaime Llera
+##
+##
+## Email: jlleraoy@gmail.com
+##
+## ---------------------------
 
 library(argparse)
 library(limma)
