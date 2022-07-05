@@ -1,6 +1,19 @@
-# Script de expresion diferencial en RNASeq con Limma Voom
-# Author: Jaime Llera Oyola
-# Date: 18-04-22
+#!/usr/bin/env Rscript
+
+## ---------------------------
+##
+## Script name: Differential expression for RNA-Seq with limma Voom
+##
+## Purpose of script: Plots information and basic statistics of a given data matrix (passed as an argument)
+##
+## Author: Jaime Llera
+##
+## Date Created: 05-04-2022
+##
+## Email: jlleraoy@gmail.com
+##
+## ---------------------------
+##
 
 library(edgeR)
 
