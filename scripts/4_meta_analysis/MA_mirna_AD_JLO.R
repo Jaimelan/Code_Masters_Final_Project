@@ -1,4 +1,15 @@
+#!/usr/bin/env Rscript
 
+## ---------------------------
+##
+## Script name: Meta analysis
+##
+## Purpose of script: Computes a MA from several expression data
+##
+##
+## Email: jlleraoy@gmail.com
+##
+## ---------------------------
 ######################################
 ### metagene.R
 ### 14/06/2020, fgarcia@cipf.es
