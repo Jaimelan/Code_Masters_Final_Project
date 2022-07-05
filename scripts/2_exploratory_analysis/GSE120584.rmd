@@ -13,7 +13,6 @@ output:
 
 # GSE120584 
 
-Se ha conseguido anotar con el ID (nombre de mirbase) pero obtenemos algunos NA (41)
 
 ## Descarga de datos
 
