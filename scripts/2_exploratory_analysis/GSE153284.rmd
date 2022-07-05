@@ -1,0 +1,191 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE153284 RNA SEQ
+
+## Descarga de datos
+
+En la publicación asociada al Dataset en GEO encontramos metadatos con la información
+del sexo para cada muestra (en los archivos suplementarios)(doi: 10.1016/j.nbd.2020.105058. Epub 2020 Aug 21.)
+
+Tenemos una matriz de conteos un poco en bruto a la que hemos realizado un primer filtrado, pero aun hay features repetidos y habría que ver qué hacer con ellos, pues los datos están normalizados con RPM.
+
+```{r}
+library(GEOquery)
+library(readxl)
+library(edgeR)
+
+options(timeout=max(10000,getOption("timeout")))
+
+GSE153284 <- getGEO("GSE153284") # Descargamos los metadatos de GEO
+metadata_GSE153284 <- GSE153284[[1]]
+```
+
+
+## Exploramos los metadatos
+
+```{r}
+library(stringr)
+
+
+supplementary_metadata <- read.csv("GSE153284_sexinfo.csv")
+
+# Vamos a cargar los metadatos de la informacion del sexo a cada muestra
+# Comprobamos que las muestras conserven el mismo orden para asociar su sexo
+all(pData(metadata_GSE153284)$geo_accession == supplementary_metadata$GEO_accession)
+
+# El orden se conserva, de modo que añadimos la informacion
+pData(metadata_GSE153284)$sex <- supplementary_metadata$Gender
+
+# Extraemos pData
+GSE153284_pData <- pData(metadata_GSE153284) 
+
+```
+
+A continuación, leemos el fichero de conteos anotado con el método SPORS1.1 con el parámetro -M 1 (especificaciones del autor que ha facilitado la matriz).
+
+```{r}
+library(dplyr)
+library(miRBaseConverter)
+# Tenemos aqui la señal con las sondas anotadas pero no filtradas
+GSE153284_mat <- read.table("RPM_summary.txt", header=TRUE)
+
+# contabilizamos el proceso de filtrado de los genes de la matriz normalizada que nos han aportado
+print(paste("Numero inicial de features:", length(GSE153284_mat$Annotation)))
+
+GSE153284_mat_filtered <- GSE153284_mat[-grep(";", GSE153284_mat$Annotation),-1]
+print(paste("Numero de features 'individuales':", length(GSE153284_mat_filtered$Annotation)))
+
+
+names2v22 <- miRNAVersionConvert(GSE153284_mat_filtered$Annotation, targetVersion = "v22", exact = T)
+
+# Los que no son NA en la versión 22 de mirbase
+print(paste("Los micrornas que se actualizan a la version 22 de miRbase son", length(which(!is.na(names2v22$TargetName)))))
+
+print(paste("Los micrornas que ya no se recogen en miRbase v22 o que no estan anotados son", length(which(is.na(names2v22$TargetName)))))
+
+# Vamos a crear una matriz de expresion filtrada
+GSE153284_mat_filtered <- GSE153284_mat_filtered[!is.na(names2v22$TargetName), ]
+print(paste("Numero de features en v22 de miRBase:", length(GSE153284_mat_filtered$Annotation)))
+
+# Tenemos duplicados, por tanto vamos a obtener los datos de la mediana de estas sondas duplicadas.
+print("Tenemos las siguientes duplicaciones de sondas")
+table(duplicated(GSE153284_mat_filtered$Annotation))
+```
+
+
+
+# Eliminamos los duplicados y extraemos el dato más expresado, de acuerdo con la respuesta en https://support.bioconductor.org/p/126306/, conservando el gen mayormente expresado de todos.
+```{r}
+A <- rowMeans(GSE153284_mat_filtered[,-1])
+o <- order(A, decreasing=TRUE)
+y <- GSE153284_mat_filtered[o,]
+d <- duplicated(y$Annotation)
+y <- y[!d,]
+
+# Asignamos el data frame sin repeticiones a la matriz de expresion filtrada completamente
+GSE153284_mat_filtered <- y
+# sustituímos $Annotation por rownames ahora que no hay duplicados
+rownames(GSE153284_mat_filtered) <- GSE153284_mat_filtered$Annotation
+GSE153284_mat_filtered <- GSE153284_mat_filtered[,-1]
+
+length(rownames(GSE153284_mat_filtered))
+```
+
+# Asignamos los nombres de las muestras con pData
+```{r}
+# Tenemos que hacer que el formato de pData y la matriz de expresion sean concordantes
+all(GSE153284_pData$title==colnames(GSE153284_mat_filtered))
+
+colnames(GSE153284_mat_filtered) <- gsub("\\.", " ", regmatches(colnames(GSE153284_mat_filtered), regexpr(".*[\\.-][0-9]",colnames(GSE153284_mat_filtered))))
+
+GSE153284_pData$title <- gsub("-", " ", regmatches(GSE153284_pData$title, regexpr(".*[\\.-][0-9]",GSE153284_pData$title)))
+
+all(GSE153284_pData$title==colnames(GSE153284_mat_filtered))
+
+# Ahora que vemos que el orden se conserva, asignamos los GEO_accession a los nombres de la matriz
+colnames(GSE153284_mat_filtered) <- GSE153284_pData$geo_accession
+```
+
+
+
+## Exploramos la información de las muestras
+
+```{r}
+colnames(GSE153284_pData)
+head(GSE153284_pData, n = 3)
+```
+
+Las 4 últimas variable serán, probablemente, las que más nos interesen:
+
+```{r}
+tail(colnames(GSE153284_pData), n=4)
+```
+
+
+```{r}
+metadata_GSE153284@annotation # También en la información descargada de GEO
+```
+
+Asignamos las variables de estudio a los slots correspondientes y guardamos pData como objeto RDS
+```{r}
+GSE153284_pData$casos <- GSE153284_pData$`disease state:ch1`
+
+GSE153284_pData$sex[which(GSE153284_pData$sex == "M")] <- "male"
+GSE153284_pData$sex[which(GSE153284_pData$sex == "F")] <- "female"
+
+
+GSE153284_pData$casos[which(GSE153284_pData$casos == "normal")] <- "NC"
+GSE153284_pData$casos[which(GSE153284_pData$casos == "Alzheimer’s disease")] <- "AD"
+
+
+saveRDS(GSE153284_pData, "GSE153284_pData.RDS")
+
+```
+
+
+
+## Exploramos la matriz de expresión
+
+Vemos sin existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE153284_mat_filtered) # No hay NA
+
+###### OPCION POSIBLE; Filtering low expression genes
+
+## "discard genes with less than one count per million (cpm) in two samples" (ref RNASeq by Irene Soler)
+# keep_genes <- rowSums(edgeR::cpm(GSE153284_mat_filtered)>1) >= 2
+# Conservamos 672 genes con una expresión suficiente
+
+# table(keep_genes)
+
+# GSE153284_mat_filtered <- GSE153284_mat_filtered[keep_genes,]
+  
+GSE153284_mat_filtered_log2 <- log2(as.matrix(GSE153284_mat_filtered)+1)
+
+range(GSE153284_mat_filtered_log2) # La escala de los datos ha sido ajustada con log2
+
+# Se guarda con log2  para los analisis exploratorios
+saveRDS(as.matrix(GSE153284_mat_filtered_log2), "GSE153284_mat.RDS")
+```
+
+## Boxplot de los conteos en log2
+
+```{r}
+# Sumamos 1 para evitar realizar log de 0 
+boxplot(GSE153284_mat_filtered_log2)
+```
+
+Los datos están normalizados con RPM (reads per million) en principio.
+
