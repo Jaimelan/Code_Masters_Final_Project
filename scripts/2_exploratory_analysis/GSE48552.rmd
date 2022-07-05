@@ -1,0 +1,116 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE48552
+
+ANOTADO CON mirbase
+
+## Descarga de datos
+
+```{r}
+library(GEOquery)
+GSE48552 <- getGEO("GSE48552") # Descargamos los datos de GEO
+GSE48552 <- GSE48552[[1]]
+
+GSE48552_pData <- pData(GSE48552)   # Extraemos phenoData
+
+# Los conteos normalizados estan en GEO como archivo suplementario (tambien los conteos raw)
+GSE48552_mat <- as.data.frame(read.table("GSE48552_normalized_counts.txt", header=TRUE, row.names = 1))
+GSE48552_mat
+# Eliminamos las muestras con Braak 1 en pdata y en la matriz
+GSE48552_mat <- GSE48552_mat[-grep("^BR1", colnames(GSE48552_mat))]
+GSE48552_pData <- GSE48552_pData[-grep("^BR1", GSE48552_pData$title),]
+
+all(GSE48552_pData$title == colnames(GSE48552_mat)) # Compruebo que el orden de los dos objetos es el mismo
+
+# Visto que el orden se conserva, asignamos el GEO_accession como nombre de columnas a la matriz
+colnames(GSE48552_mat) <- GSE48552_pData$geo_accession
+
+```
+
+## Exploramos la información de las muestras
+
+```{r}
+colnames(GSE48552_pData)
+
+head(GSE48552_pData, n = 3)
+```
+
+Las 4 últimas variable serán, probablemente, las que más nos interesen:
+
+```{r}
+tail(colnames(GSE48552_pData), n=4)
+```
+
+Vemos la anotacion del experimento
+```{r}
+library(miRBaseConverter)
+
+GSE48552@annotation # También en la información descargada de GEO
+
+names2v22 <- miRNAVersionConvert(rownames(GSE48552_mat), targetVersion = "v22", exact = T)
+
+# Partimos de 839 sondas
+length(rownames(GSE48552_mat))
+# Los que no son NA en la versión 22 de mirbase
+print(paste("Los micrornas que se actualizan a la version 22 de miRbase son", length(which(!is.na(names2v22$TargetName)))))
+# 56 NAs ¿prescindibles o se podrán transformar?
+print(paste("Los micrornas que ya no se recogen en miRbase v22 son", length(which(is.na(names2v22$TargetName)))))
+
+
+GSE48552_mat_filtered <- GSE48552_mat[!is.na(names2v22$TargetName), ]
+
+table(duplicated(rownames(GSE48552_mat_filtered)))
+
+```
+
+## Exploramos la matriz de expresión
+
+Vemos sin existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE48552_mat_filtered) # No hay NA
+
+range(GSE48552_mat_filtered) # No hay negativos
+
+# Aplicamos una transformacion logaritmica y convertimos en una matriz
+GSE48552_mat_filtered_log2 <- as.matrix(log2(GSE48552_mat_filtered+1))
+range(GSE48552_mat_filtered_log2)
+
+# Guardamos la matriz con transformacion logaritmica de forma provisional para las representaciones
+saveRDS(as.matrix(GSE48552_mat_filtered_log2), "GSE48552_mat.RDS")
+```
+
+
+## Case/Control Information {-}
+
+```{r, warning=FALSE}
+
+# Se eliminan los ultimos caracteres de la columna de titulo, que contiene el tipo de muestra
+
+GSE48552_pData$casos <- GSE48552_pData$`alzheimer's disease stage:ch1`
+GSE48552_pData$sex <- GSE48552_pData$`gender:ch1`
+GSE48552_pData$age <- GSE48552_pData$`age:ch1`
+
+# Llamaremos a las variables de casos como control (NC) y AD por consistencia
+GSE48552_pData$casos[which(GSE48552_pData$casos == "early stage (control)")] <- "NC"
+GSE48552_pData$casos[which(GSE48552_pData$casos == "late stage")] <- "AD"
+
+
+library(knitr)
+kable(table(GSE48552_pData$casos, GSE48552_pData$sex))#, col.names = c("Sex","N"))
+
+saveRDS(GSE48552_pData, "GSE48552_pData.RDS")
+
+
+```

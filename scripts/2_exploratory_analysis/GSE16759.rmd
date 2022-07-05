@@ -1,0 +1,116 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE16759
+
+## Descarga de datos
+
+```{r}
+library(GEOquery)
+GSE16759 <- getGEO("GSE16759")[[2]] # Descargamos los datos de GEO
+
+
+GSE16759_mat <- exprs(GSE16759)     # Extraemos la matriz de expresión
+GSE16759_pData <- pData(GSE16759)   # Extraemos phenoData
+
+all(GSE16759_pData$geo_accession == colnames(GSE16759_mat)) # Compruebo que el orden de los dos objetos es el mismo
+```
+
+## Exploramos la información de las muestras
+
+```{r}
+colnames(GSE16759_pData)
+
+head(GSE16759_pData, n = 3)
+```
+
+Las 4 últimas variable serán, probablemente, las que más nos interesen:
+
+```{r}
+tail(colnames(GSE16759_pData), n=4)
+```
+
+## Anotamos la matriz de expresión 
+
+En la web de GEO vemos que este estudio está realizado con GPL8757 	USC/XJZ Human 0.9 K miRNA-940-v1.0
+
+```{r}
+GSE16759@annotation # También en la información descargada de GEO
+```
+
+Vamos a anotar el array con el paquete de bioconductor correspondiente
+
+En el caso que varias sondas apunten a un mismo gen, calcularemos la mediana de la expresión de los valores.
+
+
+
+```{r}
+library(miRBaseConverter)
+
+table(duplicated(rownames(GSE16759_mat)))
+
+# MIRNAMAP, es una base de datos con la que se anotan los miRNAs que terminan en |RNAz
+# en este chip
+print(paste("Los micrornas anotados con MIRNAMAP son", length(grep("RNAz", rownames(GSE16759_mat))),". Estos micrornas seran eliminados puesto que no es posible emplear MIRNAMAP en la actualidad."))
+
+print(paste("El total de micrornas del estudio es", length(rownames(GSE16759_mat))))
+
+
+# Esta matriz convierte las sondas que son reconocidas en la ultima version (22) de
+# mirbase.
+names2v22 <- miRNAVersionConvert(rownames(GSE16759_mat), targetVersion = "v22", verbose=FALSE)
+print(paste("Conservamos un total de",length(which(!is.na(names2v22$TargetName))), "sondas"))
+
+# Aunque perdamos muchas sondas, vamos a crear una matriz filtrada solamente con los nombres de mirbase v22 que se encuentran en el experimento
+GSE16759_mat_filtered <- GSE16759_mat[-which(is.na(names2v22$TargetName)), ,drop=F]
+table(duplicated(rownames(GSE16759_mat_filtered))) # La anotación no genera duplicados
+```
+
+
+
+## Exploramos la matriz de expresión
+
+Vemos sin existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE16759_mat_filtered) # No hay NA
+
+range(GSE16759_mat_filtered) # Hay valores negativos, estamos en escala logaritmica
+
+# Vamos a sumar el valor minimo a todos los datos para evitar que ningun dato este pro debajo de 0
+GSE16759_mat_filtered <- GSE16759_mat_filtered + abs(min(GSE16759_mat_filtered))
+
+# Guardamos la matriz
+saveRDS(as.matrix(GSE16759_mat_filtered), "GSE16759_mat.RDS")
+```
+
+
+## Case/Control Information {-}
+
+```{r, warning=FALSE}
+# Se eliminan los ultimos caracteres de la columna de titulo, que contiene el tipo de muestra
+GSE16759_pData$casos <- GSE16759_pData$`diagnosis:ch1`
+GSE16759_pData$sex <- GSE16759_pData$`gender:ch1`
+GSE16759_pData$age <- GSE16759_pData$`age:ch1`
+
+library(knitr)
+kable(table(GSE16759_pData$casos, GSE16759_pData$sex))#, col.names = c("Sex","N"))
+
+# Sex info esta en formato adecuado, casos tiene que modificarse a AD y NC
+GSE16759_pData$casos[which(GSE16759_pData$casos == "normal")] <- "NC"
+
+
+saveRDS(GSE16759_pData, file = "GSE16759_pData.RDS")
+```
+
+

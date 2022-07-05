@@ -1,0 +1,192 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE46579 RNA SEQ
+
+Anotación mirbase y un identificador "brain" que no sé a qué corresponde.
+Filtrar los genes repetidos es prioritario, pues encontramos repeticiones. Crear una columna sobre la cuál eliminar los duplciados conservando el mayor.
+
+## Descarga de datos
+
+```{r}
+library(GEOquery)
+library(readxl)
+library(edgeR)
+
+
+GSE46579 <- getGEO("GSE46579") # Descargamos los metadatos de GEO
+metadata_GSE46579 <- GSE46579[[1]]
+
+# La matriz de conteos esta en GEO como Supp files, la cargamos en local
+counts_GSE46579 <- read_excel("GSE46579_AD_ngs_data_summarized.xls")
+features <- counts_GSE46579$...1
+counts_GSE46579 <- counts_GSE46579[,-1]
+rownames(counts_GSE46579) <- features
+```
+
+
+## Exploramos los metadatos
+
+```{r}
+library(stringr)
+GSE46579_pData <- pData(metadata_GSE46579) # Extraemos phenoData
+
+# Los titulos estan completos
+
+# Se ha comprobado que las muestras conservan el mismo orden en las matrices de
+# conteos y de metadatos (title), de modo que se igualan
+
+colnames(counts_GSE46579) <- GSE46579_pData$geo_accession
+GSE46579_mat <- counts_GSE46579
+GSE46579_mat <- as.data.frame(GSE46579_mat)
+```
+
+## Exploramos la información de las muestras
+
+```{r}
+head(GSE46579_pData, n = 3)
+```
+
+Las 4 últimas variable serán, probablemente, las que más nos interesen:
+
+```{r}
+tail(colnames(GSE46579_pData), n=4)
+```
+
+
+```{r}
+metadata_GSE46579@annotation # También en la información descargada de GEO
+```
+
+
+## Anotamos la matriz de expresión 
+
+Vamos a anotar el array con el paquete de bioconductor correspondiente:
+
+
+Las sondas están anotadas con un nombre más general seguido por ":" y el nombre específico del microRNA, usando strsplit podemos quedarnos solamente el nombre específico.
+
+```{r}
+
+library(miRBaseConverter)
+library(stringr)
+
+metadata_GSE46579@annotation
+# Anotacion correcta de las sondas
+# Nos quedamos la segunda parte del nombre de la sonda
+
+
+features = str_split(rownames(GSE46579_mat), ":", simplify = T)[,2]
+names2v22 <- miRNAVersionConvert(features, targetVersion = "v22", exact = T)
+
+
+# Los que no son NA en la versión 22 de mirbase
+print(paste("Los micrornas que se actualizan a la version 22 de miRbase son", length(which(!is.na(names2v22$TargetName)))))
+# 56 NAs ¿prescindibles o se podrán transformar?
+print(paste("Los micrornas que ya no se recogen en miRbase v22 son", length(which(is.na(names2v22$TargetName)))))
+
+
+filtered_names <- rownames(GSE46579_mat)[-which(is.na(names2v22$TargetName))]
+
+# Vamos a crear una matriz de expresion filtrada
+GSE46579_mat_filtered <- GSE46579_mat[!is.na(names2v22$TargetName), ]
+
+# Comprobamos que el orden de los features se conserva al realizar la traduccion a v22
+all.equal(str_split(rownames(GSE46579_mat_filtered), ":", simplify = T)[,2], names2v22[-which(is.na(names2v22$TargetName)),1])
+
+
+# Obtenemos duplicados
+table(duplicated(features))
+table(duplicated(names2v22$TargetName))
+
+
+# Los duplicados deberan ser eliminados antes de asignarse los nombres a las columnas
+# Creamos una columna anotacion que nos ayudara a eliminar duplicados
+GSE46579_mat_filtered$Annotation <- names2v22[-which(is.na(names2v22$TargetName)),]$TargetName
+
+```
+
+## Exploramos la matriz de expresión
+
+Vemos sin existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE46579_mat_filtered) # No hay NA
+
+range(GSE46579_mat_filtered[,-which(colnames(GSE46579_mat_filtered)=="Annotation")]) # No hay negativos. Por el rango de los valores, no está hecho el log2
+```
+
+
+# Eliminamos los duplicados y extraemos el dato más expresado, de acuerdo con la respuesta en https://support.bioconductor.org/p/126306/, conservando el gen mayormente expresado de todos.
+```{r}
+
+
+A <- rowMeans(GSE46579_mat_filtered[,-which(colnames(GSE46579_mat_filtered)=="Annotation")])
+o <- order(A, decreasing=TRUE)
+y <- GSE46579_mat_filtered[o,]
+d <- duplicated(y$Annotation)
+y <- y[!d,]
+
+# Asignamos el data frame sin repeticiones a la matriz de expresion filtrada completamente
+GSE46579_mat_filtered <- y
+
+# Sustituímos $Annotation por rownames ahora que no hay duplicados
+rownames(GSE46579_mat_filtered) <- GSE46579_mat_filtered$Annotation
+
+# Eliminada la columna annotation
+GSE46579_mat_filtered <- GSE46579_mat_filtered[,-which(colnames(GSE46579_mat_filtered)=="Annotation")]
+
+length(rownames(GSE46579_mat_filtered))
+```
+
+
+## Asociamos los metadatos a la matriz de conteos y guardamos la matriz con log2+1
+
+```{r}
+# Asociaremos la informacion de los metadatos de cada muestra a la matriz
+
+# Creamos los grupos experimentales
+sample_conditions <- paste(GSE46579_pData$`group:ch1`, GSE46579_pData$`gender:ch1`)
+
+# Creamos la matriz
+datos <- DGEList(counts=GSE46579_mat_filtered, group=sample_conditions, genes=rownames(GSE46579_mat_filtered))
+
+GSE46579_mat_filtered <- as.matrix(log2(GSE46579_mat_filtered+1))
+saveRDS(GSE46579_mat_filtered, "GSE46579_mat.RDS")
+```
+
+
+
+
+## Case/Control Information {-}
+
+```{r, warning=FALSE}
+
+GSE46579_pData$casos <- GSE46579_pData$`group:ch1`
+GSE46579_pData$sex <- GSE46579_pData$`gender:ch1`
+GSE46579_pData$age <- GSE46579_pData$`age:ch1`
+
+
+library(knitr)
+kable(table(GSE46579_pData$casos, GSE46579_pData$sex))#, col.names = c("Sex","N"))
+
+# Sex info viene en el formato correcto, cambiamos casos
+GSE46579_pData$casos[which(GSE46579_pData$casos == "alzheimer patient")] <- "AD"
+GSE46579_pData$casos[which(GSE46579_pData$casos == "control")] <- "NC"
+
+
+saveRDS(GSE46579_pData, "GSE46579_pData.RDS")
+
+```
+
+

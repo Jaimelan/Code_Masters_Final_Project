@@ -1,0 +1,204 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE120584 
+
+Se ha conseguido anotar con el ID (nombre de mirbase) pero obtenemos algunos NA (41)
+
+## Descarga de datos
+
+```{r}
+library(GEOquery)
+
+GSE120584 <- getGEO(filename="GSE120584_family.soft.gz", GSEMatrix = TRUE, getGPL=FALSE) # Descargamos los datos de GEO
+# Obtenemos un objeto Large GSE que vamos a convertir en ExpressionSet
+
+GSMList(GSE120584)[[1]]  
+
+gsmplatforms <- lapply(GSMList(GSE120584),function(x) {Meta(x)$platform_id})
+
+length(which(gsmplatforms == "GPL21263")) # Comprobamos que todos los datos esten en la misma plataforma
+
+gsmlist = Filter(function(gsm) {Meta(gsm)$platform_id=='GPL21263'},GSMList(GSE120584)) # Obtenemos una lista de las muestras
+
+Table(gsmlist[[1]])[1:5,]
+
+Columns(gsmlist[[1]])[1:5,]
+
+
+# get the probeset ordering
+probesets <- Table(GPLList(GSE120584)[[1]])$ID
+# make the data matrix from the VALUE columns from each GSM
+# being careful to match the order of the probesets in the platform
+# with those in the GSMs
+data.matrix <- do.call('cbind',lapply(gsmlist,function(x) 
+                                      {tab <- Table(x)
+                                       mymatch <- match(probesets,tab$ID_REF)
+                                       return(tab$VALUE[mymatch])
+                                     }))
+data.matrix <- apply(data.matrix,2,function(x) {as.numeric(as.character(x))})
+
+# Los datos tienen algun tipo de transformacion aplicada previamente
+
+
+
+# Generamos el ExpressionSet
+require(Biobase)
+# go through the necessary steps to make a compliant ExpressionSet
+rownames(data.matrix) <- probesets
+colnames(data.matrix) <- names(gsmlist)
+
+
+
+characteristics <- data.frame(matrix(ncol=4, nrow=1601))
+
+
+diagnosis <- vector(mode="character")
+age <- vector(mode="character")
+sex <- vector(mode="character")
+apoe4 <- vector(mode="character")
+
+# Se crean las variables fenotipicas adecuadas, ha sido necesario parsear la informacion de las muestras
+for (val in 1:length(gsmlist)) {
+  sampledata <- strsplit(gsmlist[[val]]@header$characteristics_ch1,"\t")
+  
+  strsplit(sampledata[[1]], ": ")[[1]][2]
+  diagnosis[val]<-strsplit(sampledata[[1]], ": ")[[1]][2]
+  age[val]<-strsplit(sampledata[[2]], ": ")[[1]][2]
+  sex[val]<-strsplit(sampledata[[3]], ": ")[[1]][2]
+  apoe4[val]<-strsplit(sampledata[[4]], ": ")[[1]][2]
+
+  }
+
+
+pdata <- as.data.frame(cbind(diagnosis, age, sex, apoe4))
+rownames(pdata) <- names(gsmlist)
+pheno <- as(pdata,"AnnotatedDataFrame")
+
+GSE120584_eset <- new('ExpressionSet',exprs=data.matrix,phenoData=pheno)
+
+GSE120584_mat <- exprs(GSE120584_eset)     # Extraemos la matriz de expresión
+GSE120584_pData <- pData(GSE120584_eset)   # Extraemos phenoData
+
+all(GSE120584_pData$geo_accession == colnames(GSE120584_mat)) # Compruebo que el orden de los dos objetos es el mismo
+```
+
+## Exploramos la información de las muestras
+
+```{r}
+colnames(GSE120584_pData) # El pdata que hemos creado tiene las siguientes variables
+table(GSE120584_pData$diagnosis, GSE120584_pData$sex)
+head(GSE120584_pData, n = 3)
+
+```
+
+
+## Anotamos la matriz de expresión 
+
+Podemos ver la anotación del experimento en el objeto original LargeGSE
+
+```{r}
+GSE120584@header$platform_id # También en la información descargada de GEO
+```
+
+## Exploramos la matriz de expresión
+
+Vemos si existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE120584_mat) # Hay NA, vamos a explorar dónde se encuentran y si conviene eliminar features o muestras.
+length(rownames(GSE120584_mat))
+# Analizamos si los NA se encuentran en alguna muestra o bien en algun feature
+head(apply(exprs(GSE120584_eset),2, function(x) sum(is.na(x)))[1000:1601]) # Siempre hay 3 NAs
+which(apply(exprs(GSE120584_eset), 1, function(x) sum(is.na(x))) == 1601)
+# Podemos ver que hay 3 features que son completamente NA
+
+# Solamente hara falta eliminar los features nulos
+nansbyrow <- which(apply(exprs(GSE120584_eset), 1, function(x) any (is.na(x)))) # NAs por fila
+
+# Creamos el expressionset sin NAs
+GSE120584_eset <- GSE120584_eset[-nansbyrow,]
+
+GSE120584_pData <- pData(GSE120584_eset)
+GSE120584_mat <- exprs(GSE120584_eset)
+
+range(GSE120584_mat) # El rango de valores final, una vez eliminados los Features NA
+
+# Existen valores negativos, vamos a sumer el valor minimo para no tener negativos
+GSE120584_mat <- GSE120584_mat + abs(min(GSE120584_mat))
+```
+
+
+## Anotación con el identificador de miRbase
+
+```{r}
+library(miRBaseConverter)
+
+# Aplicamos la funcion que convierte el accession nº a nombre de mirna
+rownames(GSE120584_mat) <- miRNA_AccessionToName(rownames(GSE120584_mat))[,2]
+
+# Evaluamos si se generan NA
+table(is.na(rownames(GSE120584_mat)))
+
+# Eliminamos los 41 NAs
+GSE120584_mat_filtered <- GSE120584_mat[!is.na(rownames(GSE120584_mat)),]
+
+# Tenemos los mirnas en la version mas reciente de mirbase, v22
+checkMiRNAVersion(rownames(GSE120584_mat_filtered))
+
+# Vamos a evaluar si obtenemos NAs adicionales al actualizar explicitamente a la v22
+names2v22 <- miRNAVersionConvert(rownames(GSE120584_mat_filtered), targetVersion = "v22")
+which(names2v22$OriginalName != names2v22$TargetName)
+
+# Todos los nombres pertenecían ya a la v22 de mirbase
+# Se reasignan igualmente, por consistencia
+rownames(GSE120584_mat_filtered) <- names2v22$TargetName
+
+```
+
+## Case/Control Information {-}
+
+```{r, warning=FALSE}
+library(knitr)
+
+GSE120584_pData$geo_accession <- rownames(GSE120584_pData)
+
+colnames(GSE120584_pData)[1] <- "casos"
+
+# La informacion de sexo viene en el formato deseado
+kable(table(GSE120584_pData$casos, GSE120584_pData$sex))#, col.names = c("Sex","N"))
+
+
+# Vamos a eliminar las muestras no AD o no NC, y ya estara en el formato deseado para futuros analisis
+GSE120584_mat_filtered <- GSE120584_mat_filtered[,which(GSE120584_pData$casos=="AD" | GSE120584_pData$casos=="NC")]
+GSE120584_pData <- GSE120584_pData[which(GSE120584_pData$casos=="AD" | GSE120584_pData$casos=="NC"),]
+
+
+table(GSE120584_pData$geo_accession==colnames(GSE120584_mat_filtered))  
+
+# Guardamos las matrices filtradas
+saveRDS(GSE120584_mat_filtered, "GSE120584_mat.RDS")
+saveRDS(GSE120584_pData, "GSE120584_pData.RDS")
+```
+
+
+
+
+
+
+
+
+
+
+
+

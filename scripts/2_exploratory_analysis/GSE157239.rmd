@@ -1,0 +1,154 @@
+---
+title: "Descarga de datos y análisis exploratorio"
+author: "José F. Català, modificado por Jaime Llera"
+date: "12/7/2021"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    # code_folding: hide
+    number_sections: false
+    theme: spacelab
+---
+
+# GSE157239
+
+## Descarga de datos
+
+```{r}
+library(GEOquery)
+GSE157239 <- getGEO("GSE157239") # Descargamos los datos de GEO
+GSE157239 <- GSE157239[[1]]
+
+GSE157239_mat <- exprs(GSE157239)     # Extraemos la matriz de expresión
+GSE157239_pData <- pData(GSE157239)   # Extraemos phenoData
+
+all(GSE157239_pData$geo_accession == colnames(GSE157239_mat)) # Compruebo que el orden de los dos objetos es el mismo
+```
+
+## Exploramos la información de las muestras
+
+```{r}
+colnames(GSE157239_pData)
+
+head(GSE157239_pData, n = 3)
+```
+
+Las 4 últimas variable serán, probablemente, las que más nos interesen:
+
+```{r}
+tail(colnames(GSE157239_pData), n=4)
+```
+
+## Anotamos la matriz de expresión 
+
+```{r}
+GSE157239@annotation # También en la información descargada de GEO
+```
+
+# Anotación del array con el transcript ID
+
+En este experimento, la anotación se ha realizado con el identificador del chip. Por esta razón necesitamos la correspondencia entre este ID y el  Id de miRbase que corresponda. Usando esta correspondencia podremos obtener los ID de miRBase y luego actualizar la información a la v22.
+```{r}
+library(tidyverse)
+library(miRBaseConverter)
+# Anotación del array con el transcript ID
+
+GPL21572 <- getGEO("GPL21572")
+
+# Vemos que las features utilizadas estan en el experimento
+length(rownames(GSE157239_mat))
+table(rownames(GSE157239_mat) %in% GPL21572@dataTable@table$ID)
+
+# Comprobar si hacen match de alguna forma porque luego no todo son transcripts IDs
+transcript_IDs <- data.frame(GPL21572@dataTable@table$ID, GPL21572@dataTable@table$`Transcript ID(Array Design)`)
+colnames(transcript_IDs) <- c("Chip_ID", "MiRbase_ID")
+
+length(which(rownames(GSE157239_mat) %in% transcript_IDs$Chip_ID))
+
+# Asignamos a rownames los ID de mirbase que corresponden al nombre de la sonda del chip GPL21572 
+rownames(GSE157239_mat) <- transcript_IDs$MiRbase_ID[match(rownames(GSE157239_mat), transcript_IDs$Chip_ID)]
+
+
+# Comprobamos si se han generado NAs, vemos que no
+length(which((is.na(rownames(GSE157239_mat)))))
+
+length(rownames(GSE157239_mat))
+annot_table <- GPL21572@dataTable@table
+
+
+# Vamos a evaluar la version de mirbase en que esta anotado el experimento
+
+checkMiRNAVersion(rownames(GSE157239_mat), verbose=F)
+# La version de mirbase mas probable es la v20, pero vamos convertir a la v22 por ser la mas reciente y por consenso con los demas estudios
+names2v22 <- miRNAVersionConvert(rownames(GSE157239_mat), targetVersion = "v22")
+
+length(which(is.na(names2v22$TargetName)))
+length(rownames(GSE157239_mat))
+# 2108 son NAs frente a los 6658 features que hay en el chip. Quizas merece la pena dejarlos
+# atras
+
+# Creamos el dataset filtrado por si acaso nos interesa quedarnos con el.
+GSE157239_mat_v22 <- GSE157239_mat[-which(is.na(names2v22$TargetName)),]
+length(rownames(GSE157239_mat_v22))
+
+# Hay que eliminar los duplicados
+table(duplicated(rownames(GSE157239_mat_v22)))
+```
+# Eliminamos los duplicados y extraemos el dato más expresado, de acuerdo con la respuesta en https://support.bioconductor.org/p/126306/, conservando el gen con mayor señal.
+```{r}
+A <- rowMeans(GSE157239_mat_v22)
+o <- order(A, decreasing=TRUE)
+y <- GSE157239_mat_v22[o,]
+d <- duplicated(rownames(y))
+y <- y[!d,]
+
+# Asignamos el data frame sin repeticiones a la matriz de expresion filtrada completamente
+GSE157239_mat_filtered <- y
+
+length(rownames(GSE157239_mat_filtered))
+```
+
+
+## Exploramos la matriz de expresión
+
+Vemos sin existen `NA` en la matriz y el rango de los valores (queremos ver si parece estar normalizada y si tiene valores negativos).
+
+```{r}
+anyNA(GSE157239_mat_filtered) # No hay NA
+range(GSE157239_mat_filtered) # No hay negativos. Por el rango de los valores, está hecho el log2
+
+# Vamos a filtrar los miRNAs inmaduros (mir)
+matures <- grep("mir", rownames(GSE157239_mat_filtered), invert=T)
+
+GSE157239_mat_filtered <- GSE157239_mat_filtered[matures,]
+length(rownames(GSE157239_mat_filtered))
+
+# Guardamos la matriz de expresion
+saveRDS(GSE157239_mat_filtered, file="GSE157239_mat.RDS")
+```
+
+
+## Case/Control Information {-}
+
+```{r, warning=FALSE}
+
+# Se eliminan los ultimos caracteres de la columna de titulo, que contiene el tipo de muestra
+GSE157239_pData$casos <- gsub('.{7}$', '', GSE157239_pData$title)
+GSE157239_pData$sex <- GSE157239_pData$`gender:ch1`
+GSE157239_pData$age <- GSE157239_pData$`age:ch1`
+
+# Casos info cambiar control por NC
+GSE157239_pData$casos
+GSE157239_pData$casos[which(GSE157239_pData$casos == "control")] <- "NC"
+
+# Sex info en el formato correcto
+GSE157239_pData$sex
+
+library(knitr)
+kable(table(GSE157239_pData$casos, GSE157239_pData$sex))#, col.names = c("Sex","N"))
+
+saveRDS(GSE157239_pData, file="GSE157239_pData.RDS")
+
+```
+
