@@ -44,8 +44,6 @@ datamatrix <- as.matrix(apply(datamatrix, 1:2, function(x) {2^x-1}))
 ####-------------------ANALISIS DE EXPRESION DIFERENCIAL--------------------####
 # Cargamos la matriz de conteos como un objeto DGEList que permita realizar la normalizacion con edgeR
 d0 <- DGEList(datamatrix)
-d0 <- calcNormFactors(d0, method="TMM")
-
 
 # Se eliminan genes poco expresados (igual esto hay que hacerlo antes de guardar las matrices de datos
 # para que la representacion sea adecuada, en el caso de los RAW data habra que hacerlo, preguntar esto)
@@ -54,6 +52,10 @@ drop <- which(apply(cpm(d0), 1, max) <= cutoff) # Opcion de Jose
 # drop <- rowSums(edgeR::cpm(d0$counts)>1) <= cutoff # Opcion de Irene
 d <- d0[-drop,] 
 dim(d) # number of genes left
+
+# Normalizamos con calcNormFactors de edgerR
+d0 <- calcNormFactors(d0, method="TMM")
+
 
 
 casos <- pDa$casos
